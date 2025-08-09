@@ -45,6 +45,7 @@ document.addEventListener('DOMContentLoaded', () => {
     initializeSocket();
     setupEventListeners();
     loadProviders();
+    initializeTTS();
     
     // Initialize thoughts button as active
     const thoughtsBtn = document.getElementById('toggleThoughts');
@@ -111,6 +112,12 @@ function setupEventListeners() {
         thoughtsBtn.addEventListener('click', toggleThoughts);
     }
     
+    // Toggle TTS button
+    const ttsBtn = document.getElementById('toggleTTS');
+    if (ttsBtn) {
+        ttsBtn.addEventListener('click', toggleTTS);
+    }
+    
     // Speed control
     const speedSlider = document.getElementById('gameSpeed');
     speedSlider.addEventListener('input', (e) => {
@@ -166,21 +173,25 @@ function updateModelOptions(selectId, providerId) {
     
     const models = {
         'openai': [
-            { value: 'gpt-3.5-turbo', text: 'GPT-3.5 (Recomendado)' },
-            { value: 'gpt-4', text: 'GPT-4 (Costoso)' }
+            { value: 'gpt-3.5-turbo', text: 'GPT-3.5' },
+            { value: 'gpt-4', text: 'GPT-4' },
+            { value: 'gpt-5', text: 'GPT-5' }
         ],
         'claude': [
-            { value: 'claude-3-haiku-20240307', text: 'Claude Haiku (Económico)' },
-            { value: 'claude-3-sonnet-20240229', text: 'Claude Sonnet (Premium)' }
+            { value: 'claude-3-5-haiku-20241022', text: 'Claude Haiku 3.5' },
+            { value: 'claude-3-7-sonnet-20250219', text: 'Claude Sonnet 3.7' },
+            { value: 'claude-sonnet-4-20250514', text: 'Claude Sonnet 4' },
+            { value: 'claude-opus-4-20250514', text: 'Claude Opus 4' },
+            { value: 'claude-opus-4-1-20250805', text: 'Claude Opus 4.1' }
         ],
         'deepseek': [
             { value: 'deepseek-chat', text: 'DeepSeek Chat' },
             { value: 'deepseek-coder', text: 'DeepSeek Coder' }
         ],
         'ollama': [
-            { value: 'llama2', text: 'Llama 2 (Local)' },
-            { value: 'mistral', text: 'Mistral (Local)' },
-            { value: 'codellama', text: 'CodeLlama (Local)' }
+            { value: 'llama2', text: 'Llama 2' },
+            { value: 'mistral', text: 'Mistral' },
+            { value: 'codellama', text: 'CodeLlama' }
         ]
     };
     
@@ -291,6 +302,25 @@ function toggleThoughts() {
         document.querySelectorAll('.thought-bubble').forEach(el => {
             el.style.display = 'none';
         });
+    }
+}
+
+function toggleTTS() {
+    ttsEnabled = !ttsEnabled;
+    const btn = document.getElementById('toggleTTS');
+    
+    if (ttsEnabled) {
+        btn.classList.add('bg-blue-500', 'text-black');
+        btn.classList.remove('border-blue-500');
+        btn.textContent = '🔊';
+    } else {
+        btn.classList.remove('bg-blue-500', 'text-black');
+        btn.classList.add('border-blue-500');
+        btn.textContent = '🔇';
+        // Stop any current speech
+        if (speechSynthesis) {
+            speechSynthesis.cancel();
+        }
     }
 }
 
@@ -596,6 +626,8 @@ function addHistoryEntry(entry) {
             message = `${playerName} jugó ${entry.data.card}`;
             if (entry.data.frase) {
                 message += ` - "${entry.data.frase}"`;
+                // TTS for player line
+                speakPlayerLine(entry.data.player, entry.data.frase);
             }
             updateCurrentAction(message);
             playSound('sound-card');
@@ -604,6 +636,8 @@ function addHistoryEntry(entry) {
             message = `${playerName} cantó ${entry.data.canto.toUpperCase()}`;
             if (entry.data.frase) {
                 message += ` - "${entry.data.frase}"`;
+                // TTS for player line
+                speakPlayerLine(entry.data.player, entry.data.frase);
             }
             updateCurrentAction(`¡${playerName} canta ${entry.data.canto}!`);
             className = 'canto';
@@ -616,6 +650,8 @@ function addHistoryEntry(entry) {
             message = `${playerName}: ${response}`;
             if (entry.data.frase) {
                 message += ` - "${entry.data.frase}"`;
+                // TTS for player line
+                speakPlayerLine(entry.data.player, entry.data.frase);
             }
             updateCurrentAction(`${playerName} dice: ${response}`);
             break;
@@ -695,7 +731,10 @@ function addThoughtBubble(thoughtData) {
     
     bubble.innerHTML = `
         <button class="absolute top-1 right-1 text-gray-500 hover:text-black text-sm" onclick="this.parentElement.remove()">✕</button>
-        <div class="italic pr-4">${thoughtData.thought}</div>
+        <div class="flex items-start gap-2 pr-4">
+            <span class="text-lg">🤔</span>
+            <div class="italic text-sm">"${thoughtData.thought}"</div>
+        </div>
         <div class="absolute w-4 h-4 bg-white transform rotate-45 top-4 -left-2"></div>
     `;
     
@@ -749,12 +788,12 @@ function addFeedEntry(message, className = '', feedType = 'actions') {
         <div>${message}</div>
     `;
     
-    feedContent.appendChild(entry);
-    feedContent.scrollTop = feedContent.scrollHeight;
+    // Insert at the top instead of bottom for reverse chronological order
+    feedContent.insertBefore(entry, feedContent.firstChild);
     
-    // Keep only last 50 entries
+    // Keep only last 50 entries (remove from bottom now)
     while (feedContent.children.length > 50) {
-        feedContent.removeChild(feedContent.firstChild);
+        feedContent.removeChild(feedContent.lastChild);
     }
 }
 
@@ -815,8 +854,72 @@ function stopGameTimer() {
     }
 }
 
-// Sound functions
+// Sound and TTS functions
 let soundEnabled = true;
+let ttsEnabled = true;
+let speechSynthesis = null;
+let playerVoices = { player1: null, player2: null };
+
+// Initialize TTS
+function initializeTTS() {
+    if ('speechSynthesis' in window) {
+        speechSynthesis = window.speechSynthesis;
+        
+        // Wait for voices to be loaded
+        if (speechSynthesis.getVoices().length === 0) {
+            speechSynthesis.addEventListener('voiceschanged', setupPlayerVoices);
+        } else {
+            setupPlayerVoices();
+        }
+    }
+}
+
+function setupPlayerVoices() {
+    const voices = speechSynthesis.getVoices();
+    
+    // Filter Spanish voices or fallback to any available
+    const spanishVoices = voices.filter(voice => 
+        voice.lang.startsWith('es') || voice.name.toLowerCase().includes('spanish')
+    );
+    
+    // Use different voices for each player
+    if (spanishVoices.length >= 2) {
+        playerVoices.player1 = spanishVoices[0];
+        playerVoices.player2 = spanishVoices[1];
+    } else if (spanishVoices.length === 1) {
+        playerVoices.player1 = spanishVoices[0];
+        playerVoices.player2 = voices.find(v => v !== spanishVoices[0]) || voices[0];
+    } else {
+        // Fallback to different voices if no Spanish available
+        playerVoices.player1 = voices[0] || null;
+        playerVoices.player2 = voices[1] || voices[0] || null;
+    }
+    
+    console.log('TTS Voices configured:', {
+        player1: playerVoices.player1?.name,
+        player2: playerVoices.player2?.name
+    });
+}
+
+function speakPlayerLine(playerId, text) {
+    if (!ttsEnabled || !speechSynthesis || !text) return;
+    
+    const voice = playerVoices[playerId];
+    if (!voice) return;
+    
+    // Clean the text - remove quotes and emojis for better speech
+    const cleanText = text.replace(/["""'']/g, '').replace(/[🃏📢💬🏆🎯✋🏁💭]/g, '').trim();
+    
+    if (cleanText.length === 0) return;
+    
+    const utterance = new SpeechSynthesisUtterance(cleanText);
+    utterance.voice = voice;
+    utterance.rate = 0.9; // Slightly slower for clarity
+    utterance.volume = 0.7;
+    utterance.pitch = playerId === 'player1' ? 1.0 : 0.8; // Different pitch for each player
+    
+    speechSynthesis.speak(utterance);
+}
 
 function playSound(soundId) {
     if (!soundEnabled) return;
