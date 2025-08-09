@@ -1,0 +1,352 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Truco - Las IAs juegan al Truco Argentino</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="/socket.io/socket.io.js"></script>
+    <style>
+        /* Custom styles for cards and animations */
+        .card {
+            box-shadow: 2px 2px 6px rgba(0,0,0,0.4);
+            transition: all 0.3s;
+        }
+        
+        .card:hover:not(.card-back) {
+            transform: translateY(-5px);
+            box-shadow: 4px 4px 10px rgba(0,0,0,0.6);
+        }
+        
+        .card-back {
+            background: #2a2a2a;
+            background-image: 
+                repeating-linear-gradient(45deg, transparent, transparent 10px, rgba(255,255,255,.1) 10px, rgba(255,255,255,.1) 20px),
+                repeating-linear-gradient(-45deg, transparent, transparent 10px, rgba(0,0,0,.1) 10px, rgba(0,0,0,.1) 20px);
+            border: 2px solid #444;
+        }
+        
+        .card.played { 
+            opacity: 0.6; 
+            transform: scale(0.95);
+        }
+        
+        .mesa {
+            background: radial-gradient(ellipse at center, #1a2e1a 0%, #0f1f0f 100%);
+            box-shadow: 0 0 40px rgba(0, 255, 0, 0.3), inset 0 0 20px rgba(0, 0, 0, 0.5);
+            position: relative;
+        }
+        
+        .mesa::before {
+            content: '';
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 120px;
+            height: 120px;
+            background: radial-gradient(circle, rgba(255,255,255,0.1) 0%, transparent 70%);
+            border-radius: 50%;
+            border: 2px solid rgba(0, 255, 0, 0.2);
+        }
+        
+        .glow-border {
+            box-shadow: 0 0 20px rgba(255, 0, 128, 0.6);
+        }
+        
+        .thought-bubble {
+            animation: slideInRight 0.5s ease-out;
+            max-width: 250px;
+            background: linear-gradient(135deg, rgba(139, 69, 19, 0.9), rgba(160, 82, 45, 0.9));
+            border: 2px solid #cd853f;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.4);
+        }
+        
+        @keyframes slideInRight {
+            from {
+                opacity: 0;
+                transform: translateX(calc(100% + 20px));
+            }
+            to {
+                opacity: 1;
+                transform: translateX(100%);
+            }
+        }
+        
+        .fade-out {
+            animation: fadeOut 0.5s ease-out forwards;
+        }
+        
+        @keyframes fadeOut {
+            to { opacity: 0; transform: scale(0.8); }
+        }
+        
+        /* Scrollbar */
+        ::-webkit-scrollbar {
+            width: 8px;
+        }
+        
+        ::-webkit-scrollbar-track {
+            background: #1a1a1a;
+        }
+        
+        ::-webkit-scrollbar-thumb {
+            background: #00ff00;
+            border-radius: 4px;
+        }
+    </style>
+</head>
+<body class="bg-gradient-to-br from-gray-900 via-black to-gray-900 text-green-400 font-mono h-screen overflow-hidden">
+    <!-- Sound Effects -->
+    <audio id="sound-card" preload="auto">
+        <source src="data:audio/wav;base64,UklGRigBAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQQBAAAAAAEAAgADAAQABQAGAAcABgAFAAQAAwACAP//+v/1//D/6//m/+H/3P/X/9L/zf/I/8P/vv+5/7T/r/+q/6X/oP+b/5b/kf+M/4f/gv99/3j/c/9u/2n/ZP9f/1r/Vf9Q/0v/Rv9B/zz/N/8y/y3/KP8j/x7/Gf8U/w//Cv8F/wD/" type="audio/wav">
+    </audio>
+    <audio id="sound-action" preload="auto">
+        <source src="data:audio/wav;base64,UklGRjIBAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQ4BAAAAAQACAAMABAAFAAYABwAIAAkACgAJAAcABQADAAEA///9//v/+f/3//X/8//x/+//7f/r/+n/5//l/+P/4f/f/93/" type="audio/wav">
+    </audio>
+
+    <div class="flex flex-col h-full">
+        <!-- Header -->
+        <header class="bg-gray-900 border-b-2 border-green-500 px-4 py-3">
+            <div class="flex items-center justify-between">
+                <div class="flex items-center gap-4">
+                    <h1 class="text-4xl font-bold bg-gradient-to-r from-blue-400 via-yellow-300 to-blue-400 bg-clip-text text-transparent drop-shadow-lg">🇺🇷 AI Truco 🃏</h1>
+                    <p class="text-green-400 text-sm font-semibold animate-pulse">Las IAs se desafían al Truco Argentino</p>
+                </div>
+                
+                <!-- Score -->
+                <div class="flex items-center gap-6">
+                    <div class="flex items-center gap-2">
+                        <span class="text-cyan-400 text-2xl">🔵</span>
+                        <span id="score-team1" class="text-3xl font-bold text-cyan-400">0</span>
+                    </div>
+                    <span class="text-pink-400 text-xl">VS</span>
+                    <div class="flex items-center gap-2">
+                        <span id="score-team2" class="text-3xl font-bold text-pink-400">0</span>
+                        <span class="text-pink-400 text-2xl">🔴</span>
+                    </div>
+                </div>
+                
+                <!-- Controls -->
+                <div class="flex items-center gap-2">
+                    <button id="pauseGame" class="px-3 py-1 border border-green-500 rounded hover:bg-green-500 hover:text-black transition">⏸️</button>
+                    <button id="toggleThoughts" class="px-3 py-1 border border-purple-500 rounded hover:bg-purple-500 hover:text-black transition">💭</button>
+                    <button id="stopGame" class="px-3 py-1 border border-red-500 rounded hover:bg-red-500 hover:text-black transition">⏹️</button>
+                    <div class="flex items-center gap-2 ml-4">
+                        <span>⚡</span>
+                        <input type="range" id="gameSpeed" min="5000" max="30000" value="15000" step="5000" class="w-24">
+                        <span id="speedValue" class="text-sm">15s</span>
+                    </div>
+                </div>
+            </div>
+        </header>
+
+        <!-- Main Content -->
+        <div class="flex-1 flex overflow-hidden">
+            <!-- Left Sidebar - Feed -->
+            <aside class="w-80 bg-gray-900 border-r-2 border-green-500 flex flex-col">
+                <div class="flex border-b border-green-500">
+                    <button onclick="switchFeed('actions')" class="feed-tab flex-1 py-2 hover:bg-gray-800 border-b-2 border-green-500">⚔️ Jugadas</button>
+                    <button onclick="switchFeed('thoughts')" class="feed-tab flex-1 py-2 hover:bg-gray-800">💭 Lo que piensan</button>
+                </div>
+                
+                <div id="actions-feed" class="flex-1 overflow-y-auto p-4">
+                    <div class="flex justify-between items-center mb-2">
+                        <h3 class="text-sm">Historial de Jugadas</h3>
+                        <button onclick="clearFeed('actions')" class="text-xs px-2 py-1 border border-green-500 rounded">🗑️</button>
+                    </div>
+                    <div id="actions-content"></div>
+                </div>
+                
+                <div id="thoughts-feed" class="hidden flex-1 overflow-y-auto p-4">
+                    <div class="flex justify-between items-center mb-2">
+                        <h3 class="text-sm">Lo que están pensando</h3>
+                        <button onclick="clearFeed('thoughts')" class="text-xs px-2 py-1 border border-green-500 rounded">🗑️</button>
+                    </div>
+                    <div id="thoughts-content"></div>
+                </div>
+            </aside>
+
+            <!-- Center - Game Area -->
+            <main class="flex-1 flex items-center justify-center p-4">
+                <!-- Game Setup -->
+                <div id="gameSetup" class="bg-gray-900 border-2 border-green-500 p-8 rounded-lg max-w-4xl w-full">
+                    <h2 class="text-2xl text-center mb-6">⚔️ Configurar la Partida</h2>
+                    
+                    
+                    <div class="grid grid-cols-2 gap-8">
+                        <!-- Player 1 -->
+                        <div class="border border-green-500 p-4 rounded">
+                            <h3 class="text-xl mb-4 text-cyan-400">🔵 Jugador 1</h3>
+                            <div class="space-y-3">
+                                <div>
+                                    <label class="text-sm text-green-600">Nombre del jugador:</label>
+                                    <input type="text" id="player1-custom-name" placeholder="Jugador 1" 
+                                           class="w-full bg-gray-800 border border-green-500 rounded px-2 py-1 text-green-400">
+                                </div>
+                                <div>
+                                    <label class="text-sm text-green-600">Modelo de IA:</label>
+                                    <select id="player1-provider" class="w-full bg-gray-800 border border-green-500 rounded px-2 py-1">
+                                        <option value="openai">OpenAI</option>
+                                        <option value="claude">Claude</option>
+                                        <option value="deepseek">DeepSeek</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label class="text-sm text-green-600">Versión del modelo:</label>
+                                    <select id="player1-model" class="w-full bg-gray-800 border border-green-500 rounded px-2 py-1">
+                                        <option value="gpt-3.5-turbo" selected>GPT-3.5 (Rápido y barato)</option>
+                                        <option value="gpt-4">GPT-4 (Más inteligente)
+                                    </select>
+                                </div>
+                                <div>
+                                    <label class="text-sm text-green-600">Personalidad:</label>
+                                    <select id="player1-personality" class="w-full bg-gray-800 border border-green-500 rounded px-2 py-1">
+                                        <option value="normal">🎯 Equilibrado</option>
+                                        <option value="agresivo">🔥 Agresivo - Canta todo</option>
+                                        <option value="conservador">🛡️ Cagón - Se achica</option>
+                                        <option value="mentiroso">🎭 Mentiroso - Bluffea mucho</option>
+                                        <option value="matematico">🧮 Calculador - Por las probabilidades</option>
+                                    </select>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Player 2 -->
+                        <div class="border border-green-500 p-4 rounded">
+                            <h3 class="text-xl mb-4 text-pink-400">🔴 Jugador 2</h3>
+                            <div class="space-y-3">
+                                <div>
+                                    <label class="text-sm text-green-600">Nombre del jugador:</label>
+                                    <input type="text" id="player2-custom-name" placeholder="Jugador 2" 
+                                           class="w-full bg-gray-800 border border-green-500 rounded px-2 py-1 text-green-400">
+                                </div>
+                                <div>
+                                    <label class="text-sm text-green-600">Modelo de IA:</label>
+                                    <select id="player2-provider" class="w-full bg-gray-800 border border-green-500 rounded px-2 py-1">
+                                        <option value="openai">OpenAI</option>
+                                        <option value="claude">Claude</option>
+                                        <option value="deepseek">DeepSeek</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label class="text-sm text-green-600">Versión del modelo:</label>
+                                    <select id="player2-model" class="w-full bg-gray-800 border border-green-500 rounded px-2 py-1">
+                                        <option value="gpt-3.5-turbo" selected>GPT-3.5 (Rápido y barato)</option>
+                                        <option value="gpt-4">GPT-4 (Más inteligente)
+                                    </select>
+                                </div>
+                                <div>
+                                    <label class="text-sm text-green-600">Personalidad:</label>
+                                    <select id="player2-personality" class="w-full bg-gray-800 border border-green-500 rounded px-2 py-1">
+                                        <option value="normal">🎯 Equilibrado</option>
+                                        <option value="agresivo">🔥 Agresivo - Canta todo</option>
+                                        <option value="conservador">🛡️ Cagón - Se achica</option>
+                                        <option value="mentiroso">🎭 Mentiroso - Bluffea mucho</option>
+                                        <option value="matematico">🧮 Calculador - Por las probabilidades</option>
+                                    </select>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <button id="startGame" class="mt-8 w-full bg-gradient-to-r from-green-500 to-green-600 text-black font-bold py-3 rounded-lg hover:from-green-400 hover:to-green-500 transition transform hover:scale-105 shadow-lg">
+                        🚀 ¡ARRANCAR LA PARTIDA!
+                    </button>
+                </div>
+
+                <!-- Game Table -->
+                <div id="gameBoard" class="hidden w-full h-full flex items-center justify-center overflow-visible">
+                    <div class="mesa w-full max-w-5xl h-full max-h-[650px] rounded-2xl border-2 border-green-500 p-8 flex flex-col relative overflow-visible">
+                        <!-- Player 1 Area -->
+                        <div class="flex-1 flex flex-col" id="player1-area">
+                            <div class="bg-black/50 rounded-lg p-3 mb-4 flex items-center gap-4">
+                                <span id="player1-avatar" class="text-3xl">🧠</span>
+                                <div>
+                                    <div id="player1-display-name" class="font-bold">Jugador 1</div>
+                                    <div class="text-sm text-green-600">
+                                        <span id="player1-model-info">GPT-4</span> • 
+                                        <span id="player1-personality-info">🎯 normal</span>
+                                    </div>
+                                </div>
+                            </div>
+                            <div id="player1-cards" class="flex justify-center gap-3"></div>
+                        </div>
+
+                        <!-- Table Center -->
+                        <div class="flex-shrink-0 my-4">
+                            <div class="bg-black/30 border-2 border-dashed border-green-500/50 rounded-xl p-4 min-h-[120px]">
+                                <div id="current-action" class="text-center text-pink-400 mb-3 text-lg font-bold"></div>
+                                <div id="table-cards" class="flex justify-center gap-6"></div>
+                            </div>
+                        </div>
+
+                        <!-- Player 2 Area -->
+                        <div class="flex-1 flex flex-col-reverse" id="player2-area">
+                            <div class="bg-black/50 rounded-lg p-3 mt-3 flex items-center gap-4">
+                                <span id="player2-avatar" class="text-3xl">🧠</span>
+                                <div>
+                                    <div id="player2-display-name" class="font-bold">Jugador 2</div>
+                                    <div class="text-sm text-green-600">
+                                        <span id="player2-model-info">GPT-4</span> • 
+                                        <span id="player2-personality-info">🎯 normal</span>
+                                    </div>
+                                </div>
+                            </div>
+                            <div id="player2-cards" class="flex justify-center gap-3"></div>
+                        </div>
+                    </div>
+                </div>
+            </main>
+
+            <!-- Right Sidebar - Observer View -->
+            <aside class="w-80 bg-gray-900 border-l-2 border-green-500 flex flex-col p-4 space-y-4 overflow-y-auto">
+                <!-- Current Bet/Action -->
+                <div id="current-bet-display" class="mb-3 p-2 bg-yellow-900/50 border border-yellow-600 rounded hidden">
+                    <div class="text-yellow-400 font-bold text-center" id="current-bet-text"></div>
+                </div>
+                
+                <!-- Round Wins Display -->
+                <div id="round-wins-display" class="mb-3 p-2 bg-blue-900/50 border border-blue-600 rounded">
+                    <div class="text-blue-400 text-center">
+                        <span class="text-sm">Bazas ganadas:</span>
+                        <div class="text-lg font-bold">
+                            <span id="round-wins-team1" class="text-cyan-400">0</span>
+                            <span class="text-white mx-2">-</span>
+                            <span id="round-wins-team2" class="text-pink-400">0</span>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Turn Indicator -->
+                <div class="bg-black border border-green-500 rounded p-3 mb-4">
+                    <div class="text-green-600 text-xs text-center">Le toca a:</div>
+                    <div id="current-turn-display" class="font-bold text-green-400 text-center">-</div>
+                </div>
+
+                <!-- Observer Cards -->
+                <div class="bg-black border border-green-500 rounded p-3">
+                    <h3 class="text-sm font-bold mb-3">👁️ Vos ves todas las cartas</h3>
+                    
+                    <!-- Player 1 Cards -->
+                    <div class="mb-4">
+                        <h4 id="observer-player1-name" class="text-cyan-400 text-sm mb-2">🔵 Jugador 1</h4>
+                        <div id="observer-player1-cards" class="flex gap-2 mb-2"></div>
+                        <div id="observer-player1-envido" class="text-xs text-green-600 text-center bg-gray-800 p-1 rounded">Envido: --</div>
+                    </div>
+                    
+                    <!-- Player 2 Cards -->
+                    <div>
+                        <h4 id="observer-player2-name" class="text-pink-400 text-sm mb-2">🔴 Jugador 2</h4>
+                        <div id="observer-player2-cards" class="flex gap-2 mb-2"></div>
+                        <div id="observer-player2-envido" class="text-xs text-green-600 text-center bg-gray-800 p-1 rounded">Envido: --</div>
+                    </div>
+                </div>
+
+            </aside>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>
