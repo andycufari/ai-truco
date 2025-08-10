@@ -189,7 +189,7 @@ MIT License - Podés usar este código para lo que quieras.
 
 ## 🙏 Créditos
 
-**Creado por [CM64.studio](https://cm64.studio)** 🚀
+**Creado por [Andy Cufari](https://x.com/andycufari)** 🚀
 
 ¿Te gustó el proyecto? ¡Dale una ⭐ al repositorio!
 
@@ -198,7 +198,7 @@ MIT License - Podés usar este código para lo que quieras.
 ### 🆘 Soporte
 
 ¿Problemas? ¿Ideas? 
-- 📫 Abrí un [Issue](https://github.com/tu-usuario/ai-truco/issues)
+- 📫 Abrí un [Issue](https://github.com/andycufari/ai-truco/issues)
 - 💬 O escribime directamente
 
 **¡Que gane el mejor algoritmo!** 🤖🃏
